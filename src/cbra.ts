@@ -51,15 +51,16 @@ export class Cbra<T> {
      * @param worstValue the worst possible value that a route can obtain, used to initialize the weights
      * @param accumulator a function that computes the new value after a transaction has been executed, given the current value obtained from previous transactions
      * @param improves a function that determines whether one value is better than the other (e.g. in simple cases where the value type is numeric this could simply be a<b or a>b)
+     * @returns a generator that yields the next transaction to be taken until the destination has been reached
      */
-    public async *computeRoute<V>(
+    public *computeRoute<V>(
         from: T,
         to: T,
         startValue: V,
         worstValue: V,
         accumulator: (currentValue: V, tx: Transaction<T>) => V,
         improves: (newValue: V, currentValue: V) => boolean,
-    ): AsyncGenerator<CbraHop<T, V>, void, void> {
+    ): Generator<CbraHop<T, V>, void, void> {
         let fromIndexed = this.findBlockchain(from)
         let toIndexed = this.findBlockchain(to)
 
