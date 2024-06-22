@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "run": "ts-node main.ts"
+  },
+  "dependencies": {
+    "@dagrejs/graphlib": "^2.2.2",
+    "@tsconfig/node20": "^20.1.4",
+    "@types/cytoscape": "^3.21.1",
+    "cytoscape": "^3.29.2",
+    "ts-essentials": "^10.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
