@@ -33,7 +33,7 @@ const conversionRates = {
         "ETH": 1,
         "USDC": 3698.66,
     }
-};
+}
 
 const transactions: Transaction<SwapBlockchain>[] = [
     [blockchains[0], blockchains[1]],
@@ -51,7 +51,7 @@ const cbra = new Cbra(
     blockchains[2],
     swapAmount,
     -Infinity,
-    (currentValue, [from, to]) => currentValue * conversionRates[from.token][to.token],
+    ([from, to], currentValue) => currentValue * conversionRates[from.token][to.token],
     (newValue, currentValue) => newValue > currentValue,
 );
 
@@ -59,4 +59,4 @@ const cbra = new Cbra(
     for await (const edge of cbra) {
         console.log(edge);
     }
-})();
+})()

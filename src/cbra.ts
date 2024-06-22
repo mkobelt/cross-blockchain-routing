@@ -3,11 +3,11 @@ type IndexedBlockchain<T> = {
     blockchain: T
 }
 
-export type Transaction<T> = [from: T, to: T];
+export type Transaction<T> = [from: T, to: T]
 
 export type CbraHop<T, V> = {
-    readonly tx: Transaction<T>;
-    readonly values: [from: V, to: V];
+    readonly tx: Transaction<T>
+    readonly values: [from: V, to: V]
 }
 
 export class Cbra<T> {
@@ -47,20 +47,20 @@ export class Cbra<T> {
      * In practice, this should be used to account for transaction times and possibly updated network conditions. 
      * @param from the source blockchain (has to be strictly equal to one of the nodes given in the constructor)
      * @param to the destination blockchain (has to be strictly equal to one of the nodes given in the constructor)
-     * @param startValue the starting value of the input (e.g. a cross-blockchain swap may use this parameter to set the amount of input tokens)
-     * @param worstValue the worst possible value that a route can obtain, used to initialize the weights
-     * @param accumulator a function that computes the new value after a transaction has been executed, given the current value obtained from previous transactions
-     * @param improves a function that determines whether one value is better than the other (e.g. in simple cases where the value type is numeric this could simply be a<b or a>b)
+     * @param startLabel the starting value of the input (e.g. a cross-blockchain swap may use this parameter to set the amount of input tokens)
+     * @param worstLabel the worst possible label that a route can obtain, used to initialize the weights
+     * @param label a function that, given a transaction and a label from the transaction's source, computes the label of the transaction's destination if it were to be executed
+     * @param improves a function that determines whether the first label is better than the other (e.g. in cases where the value type is numeric this could simply be a<b or a>b)
      * @returns a generator that yields the next transaction to be taken until the destination has been reached
      */
-    public *computeRoute<V>(
+    public *computeRoute<L>(
         from: T,
         to: T,
-        startValue: V,
-        worstValue: V,
-        accumulator: (currentValue: V, tx: Transaction<T>) => V,
-        improves: (newValue: V, currentValue: V) => boolean,
-    ): Generator<CbraHop<T, V>, void, void> {
+        startLabel: L,
+        worstLabel: L,
+        label: (tx: Transaction<T>, currentValue: L) => L,
+        improves: (newValue: L, currentValue: L) => boolean,
+    ): Generator<CbraHop<T, L>, void, void> {
         let fromIndexed = this.findBlockchain(from)
         let toIndexed = this.findBlockchain(to)
 
@@ -72,51 +72,50 @@ export class Cbra<T> {
         }
 
         while (fromIndexed !== toIndexed) {
-            const values: V[] = Array(this.N).fill(worstValue);
-            const predecessor: (number | null)[] = Array(this.N).fill(null);
+            const values: L[] = Array(this.N).fill(worstLabel)
+            const predecessor: (number | null)[] = Array(this.N).fill(null)
 
-            values[fromIndexed.index] = startValue;
+            values[fromIndexed.index] = startLabel
 
-            // TODO N-1 iterations are sufficient to find a path in a simple graph, but what about multigraphs?
             for (let i = 1; i < this.N; i++) {
                 for (let j = 0; j < this.M; j++) {
                     const tx = this.E[j]
-                    const [u, v] = tx.map(({index}) => index);
-                    const newVal = accumulator(values[u], stripTransaction(tx));
+                    const [u, v] = tx.map(({index}) => index)
+                    const newVal = label(stripTransaction(tx), values[u])
                     if (improves(newVal, values[v])) {
-                        values[v] = newVal;
-                        predecessor[v] = j;
+                        values[v] = newVal
+                        predecessor[v] = j
                     }
                 }
             }
 
             for (let i = 0; i < this.M; i++) {
                 const tx = this.E[i]
-                const [u, v] = tx.map(({index}) => index);
-                if (improves(accumulator(values[u], stripTransaction(tx)), values[v])) {
-                    throw new Error("Graph contains a weighted cycle");
+                const [u, v] = tx.map(({index}) => index)
+                if (improves(label(stripTransaction(tx), values[u]), values[v])) {
+                    throw new Error("Graph contains a weighted cycle")
                 }
             }
 
-            let nextTx: Transaction<IndexedBlockchain<T>>;
-            let nextNode = toIndexed;
+            let nextTx: Transaction<IndexedBlockchain<T>>
+            let nextNode = toIndexed
             do {
-                const prevEdge = predecessor[nextNode.index];
+                const prevEdge = predecessor[nextNode.index]
                 if (prevEdge === null) {
-                    throw new Error("Target node not reachable");
+                    throw new Error("Target node not reachable")
                 }
 
-                nextTx = this.E[prevEdge];
-                nextNode = nextTx[0];
-            } while (nextNode.index !== fromIndexed.index);
+                nextTx = this.E[prevEdge]
+                nextNode = nextTx[0]
+            } while (nextNode.index !== fromIndexed.index)
 
             yield {
                 "tx": stripTransaction(nextTx),
-                "values": [startValue, values[nextTx[1].index]],
+                "values": [startLabel, values[nextTx[1].index]],
             };
 
-            fromIndexed = nextTx[1];
-            startValue = values[fromIndexed.index];
+            fromIndexed = nextTx[1]
+            startLabel = values[fromIndexed.index]
         }
     }
 
