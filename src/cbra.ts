@@ -1,129 +1,141 @@
-type IndexedBlockchain<T> = {
+type IndexedBlockchain<B> = {
     index: number
-    blockchain: T
+    blockchain: B
 }
 
-export type Transaction<T> = [from: T, to: T]
-
-export type CbraHop<T, V> = {
-    readonly tx: Transaction<T>
-    readonly values: [from: V, to: V]
+export type Arc<B, D> = {
+    "from": B
+    "to": B
+    "details": D
 }
 
-export class Cbra<T> {
+export type Hop<B, D, L> = {
+    readonly arc: Arc<B, D>
+    readonly labels: [from: L, to: L]
+}
+
+export class CBRA<B, D> {
     public readonly N: number
     public readonly M: number
 
-    private readonly V: IndexedBlockchain<T>[]
-    private readonly E: Transaction<IndexedBlockchain<T>>[]
+    private readonly V: IndexedBlockchain<B>[]
+    private readonly A: Arc<IndexedBlockchain<B>, D>[]
 
     /**
-     * Constructs a new CBRA network with the given blockchains and transactions.
-     * Note that the edges have to refer to the same JS values as in the nodes parameter.
-     * @param blockchains the blockchains of the CBRA network
-     * @param transactions the transactions connecting the blockchains
+     * Constructs a new CBRN with the given blockchains and arcs.
+     * Note that the arcs have to refer to the same memory locations as in the blockchains parameter.
+     * @param blockchains the blockchains of the CBRN
+     * @param arcs the arcs connecting the blockchains
      */
-    constructor(blockchains: T[], transactions: Transaction<T>[]) {
+    constructor(blockchains: B[], arcs: Arc<B, D>[]) {
+        const findBlockchain = (blockchain: B): IndexedBlockchain<B> => {
+            const indexedBlockchain = this.findBlockchain(blockchain)
+
+            if (indexedBlockchain === null) {
+                throw new Error("arc involves a blockchain not present in the CBRN")
+            }
+
+            return indexedBlockchain
+        }
+
         this.V = blockchains.map((blockchain, i) => ({"index": i, blockchain}))
-        this.E = transactions.map(tx =>
-            tx.map(blockchain => {
-                const indexedBlockchain = this.findBlockchain(blockchain)
-
-                if (indexedBlockchain === null) {
-                    throw new Error(`transaction "${tx}" involves a blockchain "${blockchain}" not present in the CBRA network`)
-                }
-
-                return indexedBlockchain
-            })
-        )
+        this.A = arcs.map(arc => ({
+            "from": findBlockchain(arc.from),
+            "to": findBlockchain(arc.to),
+            "details": arc.details,
+        }))
 
         this.N = this.V.length
-        this.M = this.E.length
+        this.M = this.A.length
     }
 
     /**
      * Iteratively computes a route from a source to a destination blockchain.
      * Intermediate results are yielded such that the user can decide when to continue the route computation.
      * In practice, this should be used to account for transaction times and possibly updated network conditions. 
-     * @param from the source blockchain (has to be strictly equal to one of the nodes given in the constructor)
-     * @param to the destination blockchain (has to be strictly equal to one of the nodes given in the constructor)
+     * @param from the source blockchain (has to be strictly equal to one of the blockchains given in the constructor)
+     * @param to the destination blockchain (has to be strictly equal to one of the blockchains given in the constructor)
      * @param startLabel the starting value of the input (e.g. a cross-blockchain swap may use this parameter to set the amount of input tokens)
-     * @param worstLabel the worst possible label that a route can obtain, used to initialize the weights
+     * @param worstLabel the worst possible label that a route can obtain, used as an initial label for all blockchains
      * @param label a function that, given a transaction and a label from the transaction's source, computes the label of the transaction's destination if it were to be executed
      * @param improves a function that determines whether the first label is better than the other (e.g. in cases where the value type is numeric this could simply be a<b or a>b)
      * @returns a generator that yields the next transaction to be taken until the destination has been reached
      */
     public *computeRoute<L>(
-        from: T,
-        to: T,
+        from: B,
+        to: B,
         startLabel: L,
         worstLabel: L,
-        label: (tx: Transaction<T>, currentValue: L) => L,
-        improves: (newValue: L, currentValue: L) => boolean,
-    ): Generator<CbraHop<T, L>, void, void> {
+        label: (arc: Arc<B, D>, startLabel: L) => L,
+        improves: (newLabel: L, currentLabel: L) => boolean,
+    ): Generator<Hop<B, D, L>, void, void> {
         let fromIndexed = this.findBlockchain(from)
         let toIndexed = this.findBlockchain(to)
 
         if (fromIndexed === null) {
-            throw new Error(`source blockchain ${from} not found in CBRA network`)
+            throw new Error(`source blockchain ${from} not found in CBRN`)
         }
         if (toIndexed === null) {
-            throw new Error(`destination blockchain ${to} not found in CBRA network`)
+            throw new Error(`destination blockchain ${to} not found in CBRN`)
         }
 
         while (fromIndexed !== toIndexed) {
-            const values: L[] = Array(this.N).fill(worstLabel)
+            const labels: L[] = Array(this.N).fill(worstLabel)
             const predecessor: (number | null)[] = Array(this.N).fill(null)
 
-            values[fromIndexed.index] = startLabel
+            labels[fromIndexed.index] = startLabel
 
             for (let i = 1; i < this.N; i++) {
                 for (let j = 0; j < this.M; j++) {
-                    const tx = this.E[j]
-                    const [u, v] = tx.map(({index}) => index)
-                    const newVal = label(stripTransaction(tx), values[u])
-                    if (improves(newVal, values[v])) {
-                        values[v] = newVal
+                    const arc = this.A[j]
+                    const [u, v] = [arc.from.index, arc.to.index]
+                    const newLabel = label(stripArc(arc), labels[u])
+                    if (improves(newLabel, labels[v])) {
+                        labels[v] = newLabel
                         predecessor[v] = j
                     }
                 }
             }
 
             for (let i = 0; i < this.M; i++) {
-                const tx = this.E[i]
-                const [u, v] = tx.map(({index}) => index)
-                if (improves(label(stripTransaction(tx), values[u]), values[v])) {
+                const arc = this.A[i]
+                const [u, v] = [arc.from.index, arc.to.index]
+                if (improves(label(stripArc(arc), labels[u]), labels[v])) {
                     throw new Error("Graph contains a weighted cycle")
                 }
             }
 
-            let nextTx: Transaction<IndexedBlockchain<T>>
-            let nextNode = toIndexed
+            let nextArc: Arc<IndexedBlockchain<B>, D>
+            let nextBlockchain = toIndexed
             do {
-                const prevEdge = predecessor[nextNode.index]
+                const prevEdge = predecessor[nextBlockchain.index]
                 if (prevEdge === null) {
-                    throw new Error("Target node not reachable")
+                    throw new Error("Target blockchain not reachable")
                 }
 
-                nextTx = this.E[prevEdge]
-                nextNode = nextTx[0]
-            } while (nextNode.index !== fromIndexed.index)
+                nextArc = this.A[prevEdge]
+                nextBlockchain = nextArc.from
+            } while (nextBlockchain.index !== fromIndexed.index)
 
             yield {
-                "tx": stripTransaction(nextTx),
-                "values": [startLabel, values[nextTx[1].index]],
+                "arc": stripArc(nextArc),
+                "labels": [startLabel, labels[nextArc.to.index]],
             };
 
-            fromIndexed = nextTx[1]
-            startLabel = values[fromIndexed.index]
+            fromIndexed = nextArc.to
+            startLabel = labels[fromIndexed.index]
         }
     }
 
-    private findBlockchain(blockchain: T): IndexedBlockchain<T> | null {
+    private findBlockchain(blockchain: B): IndexedBlockchain<B> | null {
         return this.V.find(indexedBlockchain => indexedBlockchain.blockchain === blockchain) ?? null
     }
 }
 
-function stripTransaction<T>(tx: Transaction<IndexedBlockchain<T>>): Transaction<T> {
-    return tx.map(({blockchain}) => blockchain)
+function stripArc<B, D>(arc: Arc<IndexedBlockchain<B>, D>): Arc<B, D> {
+    return {
+        "from": arc.from.blockchain,
+        "to": arc.to.blockchain,
+        "details": arc.details,
+    }
 }

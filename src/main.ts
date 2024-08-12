@@ -1,49 +1,51 @@
 /// <reference path="../typings/array_map_fix.d.ts" />
 
-import { Cbra, Transaction } from "./cbra"
-
-type Token = "ETH" | "USDC"
+import { CBRA, Arc } from "./cbra"
 
 type SwapBlockchain = {
-    "blockchain": string
-    "token": Token
+    "blockchain": "Ethereum" | "Polygon"
+    "token": "ETH" | "USDC"
+}
+
+const eth_ETH: SwapBlockchain = {
+    "blockchain": "Ethereum",
+    "token": "ETH",
+}
+const eth_USDC: SwapBlockchain = {
+    "blockchain": "Ethereum",
+    "token": "USDC",
+}
+const plg_USDC: SwapBlockchain = {
+    "blockchain": "Polygon",
+    "token": "USDC",
 }
 
 const blockchains: SwapBlockchain[] = [
-    {
-        "blockchain": "ethereum",
-        "token": "ETH",
-    },
-    {
-        "blockchain": "ethereum",
-        "token": "USDC",
-    },
-    {
-        "blockchain": "polygon",
-        "token": "USDC",
-    },
+    eth_ETH,
+    eth_USDC,
+    plg_USDC,
 ]
 
 const conversionRates = {
     "USDC": {
-        "ETH": 0.00027,
+        "ETH": 1 / 3000,
         "USDC": 1,
     },
     "ETH": {
         "ETH": 1,
-        "USDC": 3698.66,
+        "USDC": 3000,
     }
 }
 
-const transactions: Transaction<SwapBlockchain>[] = [
-    [blockchains[0], blockchains[1]],
-    [blockchains[1], blockchains[2]],
-    [blockchains[1], blockchains[2]],
+const transactions: Arc<SwapBlockchain, undefined>[] = [
+    {"from": eth_ETH, "to": eth_USDC, "details": undefined},
+    {"from": eth_USDC, "to": plg_USDC, "details": undefined},
+    {"from": eth_USDC, "to": plg_USDC, "details": undefined},
 ]
 
 const swapAmount = 1
 
-const cbra = new Cbra(
+const cbra = new CBRA(
     blockchains,
     transactions,
 ).computeRoute(
@@ -51,12 +53,12 @@ const cbra = new Cbra(
     blockchains[2],
     swapAmount,
     -Infinity,
-    ([from, to], currentValue) => currentValue * conversionRates[from.token][to.token],
+    ({from, to}, currentValue) => currentValue * conversionRates[from.token][to.token],
     (newValue, currentValue) => newValue > currentValue,
 );
 
 (async () => {
-    for await (const edge of cbra) {
+    for (const edge of cbra) {
         console.log(edge);
     }
 })()
