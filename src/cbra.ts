@@ -85,15 +85,22 @@ export class CBRA<B, D> {
 
             labels[fromIndexed.index] = startLabel
 
-            for (let i = 1; i < this.N; i++) {
+            for (let i = 1; i < this.M; i++) {
+                let improvedThisRound = false
+
                 for (let j = 0; j < this.M; j++) {
                     const arc = this.A[j]
                     const [u, v] = [arc.from.index, arc.to.index]
                     const newLabel = label(stripArc(arc), labels[u])
                     if (improves(newLabel, labels[v])) {
+                        improvedThisRound = true
                         labels[v] = newLabel
                         predecessor[v] = j
                     }
+                }
+
+                if (!improvedThisRound) {
+                    break
                 }
             }
 
