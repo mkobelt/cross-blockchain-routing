@@ -1,18 +1,66 @@
-/// <reference path="../typings/array_map_fix.d.ts" />
-
 import { Arc, CBRA } from "./cbra"
+import path from "node:path"
+import fs from "node:fs"
+import { stringify } from "csv-stringify/sync"
 
-const repetitions = 300
-const tokenCount = 5
-const dexCount = 2
-const swapAmount = 1
+type Parameters = {
+    "blockchains": number
+    "tokens": number
+    "exchanges": number
+    "volatility": number
+}
 
-evaluate(20, 0.05)
+type BoxPlot = {
+    "median": number
+    "minimum": number
+    "maximum": number
+    "lower": number
+    "upper": number
+}
 
-function evaluate(blockchainCount: number, volatility: number) {
-    const blockchains = [...Array(blockchainCount).keys()]
-    const tokens = [...Array(tokenCount).keys()]
-    const dexes = [...Array(dexCount).keys()]
+const repetitions = 1000
+const swapAmount = 100_000
+
+const defaultTokens = 6
+const defaultExchanges = 2
+const defaultBlockchains = 3
+const defaultVolatility = 0.01
+
+const outDir = path.resolve(__dirname, "../csv")
+
+if (!fs.existsSync(outDir)){
+    fs.mkdirSync(outDir)
+}
+
+run("blockchains", 2, 10, 1)
+run("tokens", 2, 10, 1)
+run("exchanges", 1, 10, 1)
+run("volatility", 0, 0.1, 0.01)
+
+function run<T extends keyof Parameters>(variable: T, from: number, to: number, step: number) {
+    const data: (BoxPlot & {"x": number})[] = []
+
+    for (let x = from; x <= to; x += step) {
+        const obj = Object.assign({
+            x,
+        }, evaluate({
+            "blockchains": defaultBlockchains,
+            "tokens": defaultTokens,
+            "exchanges": defaultExchanges,
+            "volatility": defaultVolatility,
+            [variable]: x,
+        }))
+
+        data.push(obj)
+    }
+
+    fs.writeFileSync(path.resolve(outDir, `${variable}.csv`), stringify(data, {"header": true}))
+}
+
+function evaluate(params: Parameters): BoxPlot {
+    const blockchains = [...Array(params.blockchains).keys()]
+    const tokens = [...Array(params.tokens).keys()]
+    const dexes = [...Array(params.exchanges).keys()]
     const bridgesAndDexes = [...dexes, dexes.length]
 
     type Blockchain = number
@@ -23,8 +71,6 @@ function evaluate(blockchainCount: number, volatility: number) {
         "blockchain": Blockchain
         "token": Token
     }
-
-    const bridgeToken = Math.floor(tokenCount / 2)
 
     const blockchainTokens: BlockchainToken[] = blockchains.flatMap(blockchain => tokens.map(token => ({
         blockchain,
@@ -38,8 +84,12 @@ function evaluate(blockchainCount: number, volatility: number) {
 
                 if (source.blockchain === destination.blockchain) {
                     bridgeOrDexes.push(...dexes)
-                } else if (Math.abs(source.blockchain - destination.blockchain) === 1 && source.token === bridgeToken && destination.token === bridgeToken) {
-                    bridgeOrDexes.push(dexCount)
+                } else if (
+                    destination.blockchain - source.blockchain === 1 && // One-directional bridging
+                    source.token === destination.token &&
+                    source.token === source.blockchain % params.tokens // Make sure that the exchanges on the destination blockchain can't simply be skipped by directly bridging again
+                ) {
+                    bridgeOrDexes.push(dexes.length)
                 }
 
                 return bridgeOrDexes.map(bridgeOrDex => ({
@@ -55,24 +105,26 @@ function evaluate(blockchainCount: number, volatility: number) {
         arcs,
     )
 
-    const initialExchangeRates = blockchains.reduce((obj, fromBlockchain) => {
-        obj[fromBlockchain] = blockchains.reduce((obj, toBlockchain) => {
-            obj[toBlockchain] = bridgesAndDexes.reduce((obj, bridgeOrDex) => {
-                obj[bridgeOrDex] = tokens.reduce((obj, from) => {
-                    obj[from] = tokens.reduce((obj, to) => {
-                        obj[to] = 1
-                        return obj
-                    }, {} as Record<Token, number>)
-                    return obj
-                }, {} as Record<Token, Record<Token, number>>)
-                return obj
-            }, {} as Record<BridgeOrDex, Record<Token, Record<Token, number>>>)
-            return obj
-        }, {} as Record<Blockchain, Record<BridgeOrDex, Record<Token, Record<Token, number>>>>) 
-        return obj
-    }, {} as Record<Blockchain, Record<Blockchain, Record<BridgeOrDex, Record<Token, Record<Token, number>>>>>)
+    const results: number[] = []
 
     for (let i = 0; i < repetitions; i++) {
+        const initialExchangeRates = blockchains.reduce((obj, fromBlockchain) => {
+            obj[fromBlockchain] = blockchains.reduce((obj, toBlockchain) => {
+                obj[toBlockchain] = bridgesAndDexes.reduce((obj, bridgeOrDex) => {
+                    obj[bridgeOrDex] = tokens.reduce((obj, from) => {
+                        obj[from] = tokens.reduce((obj, to) => {
+                            obj[to] = getRandomArbitrary(1 - params.volatility, 1)
+                            return obj
+                        }, {} as Record<Token, number>)
+                        return obj
+                    }, {} as Record<Token, Record<Token, number>>)
+                    return obj
+                }, {} as Record<BridgeOrDex, Record<Token, Record<Token, number>>>)
+                return obj
+            }, {} as Record<Blockchain, Record<BridgeOrDex, Record<Token, Record<Token, number>>>>) 
+            return obj
+        }, {} as Record<Blockchain, Record<Blockchain, Record<BridgeOrDex, Record<Token, Record<Token, number>>>>>)
+
         const exchangeRates = structuredClone(initialExchangeRates)
 
         const dynamicRoute = cbraInstance.computeRoute(
@@ -114,10 +166,9 @@ function evaluate(blockchainCount: number, volatility: number) {
             
             updateExchangeRates()
         }
-    
-        console.log("Static result:", staticOut)
-        console.log("Dynamic result:", dynamicOut)
-    
+
+        results.push(dynamicOut / staticOut)
+
         function updateExchangeRates() {
             for (const fromBlockchain in exchangeRates) {
                 const toBlockchains = exchangeRates[fromBlockchain as unknown as Blockchain]
@@ -128,13 +179,49 @@ function evaluate(blockchainCount: number, volatility: number) {
                         for (const fromToken in fromTokens) {
                             const toTokens = fromTokens[fromToken as unknown as Token]
                             for (const toToken in toTokens) {
-                                toTokens[toToken as unknown as Token] *= getRandomArbitrary(1 - volatility, 1)
+                                toTokens[toToken as unknown as Token] *= getRandomArbitrary(1 - params.volatility, 1)
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    results.sort((a, b) => a - b)
+
+    const median = (results[repetitions / 2 - 1] + results[repetitions / 2]) / 2
+    const lower = (results[repetitions / 4 - 1] + results[repetitions / 4]) / 2
+    const upper = (results[repetitions * 3 / 4 - 1] + results[repetitions * 3 / 4]) / 2
+
+    const iqr = upper - lower
+    const lowerBound = lower - 1.5 * iqr
+    const upperBound = upper + 1.5 * iqr
+
+    let minimum = 0
+    for (let i = 0; i < results.length; i++) {
+        const el = results[i]
+        if (el < lowerBound) { continue }
+
+        minimum = el
+        break
+    }
+
+    let maximum = 0
+    for (let i = results.length - 1; i >= 0; i--) {
+        const el = results[i]
+        if (el > upperBound) { continue }
+
+        maximum = el
+        break
+    }
+
+    return {
+        median,
+        lower,
+        upper,
+        "minimum": results[0],
+        "maximum": results[results.length - 1],
     }
 }
 

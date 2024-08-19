@@ -4,6 +4,7 @@
   },
   "dependencies": {
     "@tsconfig/node20": "^20.1.4",
+    "csv-stringify": "^6.5.1",
     "ts-node": "^10.9.2"
   }
 }
